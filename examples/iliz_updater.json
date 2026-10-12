@@ -1,0 +1,22 @@
+{
+  "app_name": "My App",
+  "host_exe": "my_app.exe",
+  "version": { "source": "exe" },
+  "source": {
+    "type": "github",
+    "repo": "owner/my_app",
+    "asset": "my_app-*.zip",
+    "sums_asset": "SHA256SUMS",
+    "prerelease": false
+  },
+  "require_hash": true,
+  "preserve": ["config.json", "*.log", "data/"],
+  "restart": true,
+  "restart_args": "",
+  "close_host": "graceful",
+  "close_timeout_sec": 15,
+  "check_interval_hours": 24,
+  "work_dir": "update",
+  "language": "auto",
+  "log": true
+}

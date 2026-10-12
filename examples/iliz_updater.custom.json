@@ -1,0 +1,7 @@
+{
+  "app_name": "My App",
+  "host_exe": "my_app.exe",
+  "version": { "source": "file", "value": "version.txt" },
+  "source": { "type": "json", "url": "https://example.com/my_app/latest.json" },
+  "preserve": ["config.json"]
+}

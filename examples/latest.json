@@ -1,0 +1,9 @@
+{
+  "version": "1.4.0",
+  "url": "my_app-1.4.0.zip",
+  "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "size": 1234567,
+  "published": "2026-10-12T12:00:00Z",
+  "page": "https://example.com/my_app/releases/1.4.0",
+  "notes": "- New sounds\n- Fixed tray icon"
+}

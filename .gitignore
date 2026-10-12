@@ -1,0 +1,25 @@
+# Build output
+bin/
+dist/
+
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.res
+*.exe
+*.zip
+
+# Runtime folders when testing next to an app
+update/
+
+# IDE / OS
+.cursor/
+.vs/
+*.user
+*.suo
+Thumbs.db
+Desktop.ini
+.DS_Store
