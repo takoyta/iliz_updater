@@ -122,11 +122,26 @@ IlizUpdaterLaunch(FALSE);                                 // «Обновить�
 Затем он ждёт выхода программы, ставит обновление и перезапускает её. Можно сделать и как в Telegram:
 `--download-only` в фоне, а при выходе из программы `--apply --silent --pid <свой pid> --no-restart`.
 
+Заголовок вызывает только kernel32/user32 (`HeapAlloc`, `wsprintfW`, `lstr*`) и не использует CRT,
+поэтому подходит и для сборок без CRT (`/NODEFAULTLIB`, своя точка входа). Результат освобождать
+только через `IlizUpdaterFree`: память берётся из кучи процесса, а не через `malloc`. Заголовок лучше
+скопировать в репозиторий программы, чтобы она собиралась сама по себе.
+
+При `version.source: exe` (по умолчанию) у exe программы **обязательно** должен быть ресурс
+VERSIONINFO с `ProductVersion` (файл `.rc`, собранный `rc` и прилинкованный). Без него текущая версия
+пустая, и любой релиз считается новым. Версию лучше держать в одном define и брать её и в коде, и в `.rc`.
+
 ## Чеклист релиза
 
 1. Положить в zip `iliz_updater.exe` и `iliz_updater.json` проекта.
 2. Загрузить в релиз GitHub zip **и** `SHA256SUMS`.
 3. Тег = версия (`0.1.9` или `v0.1.9`), та же, что в ProductVersion exe.
+
+4. Скрипт упаковки может быть совсем простым (пример: `release.bat` в
+   [iliz_resmon](https://github.com/takoyta/iliz_resmon)): собрать, скопировать файлы во временную
+   папку, упаковать `Compress-Archive` в `<app>-<ver>.zip`, записать `SHA256SUMS` строкой
+   `(Get-FileHash -Algorithm SHA256 zip).Hash.ToLower() + "  <имя zip>"` и выполнить
+   `gh release create v<ver> <zip> SHA256SUMS`.
 
 ## Лицензия
 

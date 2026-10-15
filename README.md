@@ -202,6 +202,16 @@ restarts the app. Alternatively, the app can simply exit right after starting th
 For a "download now, install on exit" flow like Telegram's, run `--download-only` in the
 background, and on exit run `--apply --silent --pid <self> --no-restart`.
 
+The header calls only kernel32/user32 (`HeapAlloc`, `wsprintfW`, `lstr*`), no C runtime, so it
+works in CRT-free builds (`/NODEFAULTLIB`, own entry point). Free results only with
+`IlizUpdaterFree` (memory comes from the process heap, not `malloc`). Copy the header into the host
+repo so the project builds on its own.
+
+With `version.source: exe` (the default) the host exe **must** have a VERSIONINFO resource with
+`ProductVersion` set (an `.rc` file compiled with `rc` and linked in). Without it the current version
+is empty and every release looks new. Keep one version define and use it in both the code and the
+`.rc`.
+
 Other languages: run the exe hidden, read the exit code, and parse the stdout JSON.
 
 ## Release checklist for a host project
@@ -210,6 +220,12 @@ Other languages: run the exe hidden, read the exit code, and parse the stdout JS
 2. Upload the zip **and** `SHA256SUMS` (`<sha256>  <zip name>`) to the GitHub release.
 3. Tag the release with the version (`0.1.9` or `v0.1.9`), and make it match the exe's
    ProductVersion.
+
+4. A pack script can be this small (see `release.bat` in
+   [iliz_resmon](https://github.com/takoyta/iliz_resmon)): build, copy the files into a stage folder,
+   `Compress-Archive` it to `<app>-<ver>.zip`, and write `SHA256SUMS` with
+   `(Get-FileHash -Algorithm SHA256 zip).Hash.ToLower() + "  <zip name>"`, then
+   `gh release create v<ver> <zip> SHA256SUMS`.
 
 ## License
 

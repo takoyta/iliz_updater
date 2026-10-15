@@ -2,8 +2,11 @@
  * iliz_updater_client.h - drop-in, header-only helper for apps that ship iliz_updater.exe.
  * MIT License, Copyright (C) 2026 iliz. C and C++, Win32 only, no dependencies.
  *
+ * Uses only kernel32/user32 (HeapAlloc, wsprintfW, lstr*): no C runtime calls, so it also works
+ * in CRT-free builds (/NODEFAULTLIB, own entry point). Link kernel32.lib and user32.lib.
+ *
  *   // 1) Background check, result posted to your window:
- *   IlizUpdaterCheckAsync(hwnd, WM_APP_UPDATE);
+ *   IlizUpdaterCheckAsync(hwnd, WM_APP_UPDATE, L"--if-due");
  *   case WM_APP_UPDATE: {
  *       IlizUpdateInfo *u = (IlizUpdateInfo *)lParam;
  *       if (u->exitCode == ILIZ_UPD_UPDATE_AVAILABLE) ShowBadge(u->latest);
@@ -16,10 +19,6 @@
  */
 #pragma once
 #include <windows.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <wchar.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -46,24 +45,28 @@ typedef struct IlizUpdateInfo {
     char *json;        /* full stdout (UTF-8), includes "notes", "url", "page"... */
 } IlizUpdateInfo;
 
-/* <folder of this exe>\iliz_updater.exe */
+static __inline void *IlizUpdaterAlloc_(SIZE_T n) { return HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, n); }
+static __inline void IlizUpdaterHeapFree_(void *p) { if (p) HeapFree(GetProcessHeap(), 0, p); }
+
+/* <folder of this exe>\iliz_updater.exe; FALSE if it is not there */
 static __inline BOOL IlizUpdaterPath(wchar_t *out, DWORD cap)
 {
-    DWORD n = GetModuleFileNameW(NULL, out, cap);
+    DWORD n = GetModuleFileNameW(NULL, out, cap), s = n;
     if (!n || n >= cap)
         return FALSE;
-    wchar_t *s = wcsrchr(out, L'\\');
-    if (!s || (DWORD)(s - out) + 18 >= cap)
+    while (s && out[s - 1] != L'\\')
+        --s;
+    if (!s || s + 17 > cap)
         return FALSE;
-    wcscpy_s(s + 1, cap - (DWORD)(s + 1 - out), L"iliz_updater.exe");
+    lstrcpyW(out + s, L"iliz_updater.exe");
     return GetFileAttributesW(out) != INVALID_FILE_ATTRIBUTES;
 }
 
-/* Run the updater hidden with args, capture stdout (malloc'd, caller frees). */
+/* Run the updater hidden with args, capture stdout (heap; free with IlizUpdaterFree or HeapFree). */
 static __inline int IlizUpdaterRun(const wchar_t *args, char **out, DWORD timeoutMs)
 {
     wchar_t exe[MAX_PATH], cmd[MAX_PATH + 512];
-    SECURITY_ATTRIBUTES sa = {sizeof(sa), NULL, TRUE};
+    SECURITY_ATTRIBUTES sa;
     HANDLE rd = NULL, wr = NULL;
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
@@ -71,13 +74,16 @@ static __inline int IlizUpdaterRun(const wchar_t *args, char **out, DWORD timeou
     DWORD len = 0, cap = 0, code = ILIZ_UPD_ERR_NOT_FOUND;
     if (out)
         *out = NULL;
-    if (!IlizUpdaterPath(exe, MAX_PATH))
+    if (!IlizUpdaterPath(exe, MAX_PATH) || (args && lstrlenW(args) > 500))
         return ILIZ_UPD_ERR_NOT_FOUND;
-    swprintf_s(cmd, MAX_PATH + 512, L"\"%ls\" %ls", exe, args ? args : L"");
+    wsprintfW(cmd, L"\"%s\" %s", exe, args ? args : L"");
+    sa.nLength = sizeof(sa);
+    sa.lpSecurityDescriptor = NULL;
+    sa.bInheritHandle = TRUE;
     if (!CreatePipe(&rd, &wr, &sa, 0))
         return ILIZ_UPD_ERR_NOT_FOUND;
     SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
-    memset(&si, 0, sizeof(si));
+    SecureZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
     si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_HIDE;
@@ -91,8 +97,8 @@ static __inline int IlizUpdaterRun(const wchar_t *args, char **out, DWORD timeou
     }
     CloseHandle(wr);
     for (;;) {
-        char tmp[4096];
-        DWORD got = 0;
+        char tmp[1024];        /* keep frames under 4 KB: no __chkstk in CRT-free builds */
+        DWORD got = 0, i;
         if (!ReadFile(rd, tmp, sizeof(tmp), &got, NULL) || !got)
             break;
         if (len + got + 1 > cap) {
@@ -100,13 +106,14 @@ static __inline int IlizUpdaterRun(const wchar_t *args, char **out, DWORD timeou
             char *nb;
             while (nc < len + got + 1)
                 nc *= 2;
-            nb = (char *)realloc(buf, nc);
+            nb = (char *)(buf ? HeapReAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, buf, nc) : IlizUpdaterAlloc_(nc));
             if (!nb)
                 break;
             buf = nb;
             cap = nc;
         }
-        memcpy(buf + len, tmp, got);
+        for (i = 0; i < got; ++i)
+            buf[len + i] = tmp[i];
         len += got;
         buf[len] = 0;
     }
@@ -120,7 +127,7 @@ static __inline int IlizUpdaterRun(const wchar_t *args, char **out, DWORD timeou
     if (out)
         *out = buf;
     else
-        free(buf);
+        IlizUpdaterHeapFree_(buf);
     return (int)code;
 }
 
@@ -130,14 +137,22 @@ static __inline BOOL IlizUpdaterJsonStr(const char *json, const char *key, char 
     char pat[64];
     const char *p;
     size_t n = 0;
+    int k;
     out[0] = 0;
-    if (!json || strlen(key) > 56)
+    if (!json || lstrlenA(key) > 56)
         return FALSE;
-    sprintf_s(pat, sizeof(pat), "\"%s\":\"", key);
-    p = strstr(json, pat);
-    if (!p)
+    wsprintfA(pat, "\"%s\":\"", key);
+    k = lstrlenA(pat);
+    for (p = json; *p; ++p) {               /* strstr without the CRT */
+        int i = 0;
+        while (i < k && p[i] == pat[i])
+            ++i;
+        if (i == k)
+            break;
+    }
+    if (!*p)
         return FALSE;
-    p += strlen(pat);
+    p += k;
     while (*p && *p != '"' && n + 1 < cap) {
         if (*p == '\\' && p[1]) {
             ++p;
@@ -155,10 +170,12 @@ static __inline BOOL IlizUpdaterJsonStr(const char *json, const char *key, char 
 static __inline IlizUpdateInfo *IlizUpdaterCheck(const wchar_t *extraArgs, DWORD timeoutMs)
 {
     wchar_t args[256];
-    IlizUpdateInfo *u = (IlizUpdateInfo *)calloc(1, sizeof(IlizUpdateInfo));
+    IlizUpdateInfo *u = (IlizUpdateInfo *)IlizUpdaterAlloc_(sizeof(IlizUpdateInfo));
     if (!u)
         return NULL;
-    swprintf_s(args, 256, L"--check --json %ls", extraArgs ? extraArgs : L"");
+    if (extraArgs && lstrlenW(extraArgs) > 200)
+        extraArgs = NULL;
+    wsprintfW(args, L"--check --json %s", extraArgs ? extraArgs : L"");
     u->exitCode = IlizUpdaterRun(args, &u->json, timeoutMs ? timeoutMs : 60000);
     IlizUpdaterJsonStr(u->json, "status", u->status, sizeof(u->status));
     IlizUpdaterJsonStr(u->json, "current", u->current, sizeof(u->current));
@@ -171,8 +188,8 @@ static __inline IlizUpdateInfo *IlizUpdaterCheck(const wchar_t *extraArgs, DWORD
 static __inline void IlizUpdaterFree(IlizUpdateInfo *u)
 {
     if (u) {
-        free(u->json);
-        free(u);
+        IlizUpdaterHeapFree_(u->json);
+        IlizUpdaterHeapFree_(u);
     }
 }
 
@@ -182,9 +199,9 @@ static __inline DWORD WINAPI IlizUpdaterCheckThread_(void *p)
 {
     IlizUpdaterAsyncCtx_ *c = (IlizUpdaterAsyncCtx_ *)p;
     IlizUpdateInfo *u = IlizUpdaterCheck(c->args, 0);
-    if (!u || !PostMessageW(c->hwnd, c->msg, (WPARAM)(u ? u->exitCode : ILIZ_UPD_ERR_NOT_FOUND), (LPARAM)u))
+    if (!u || !PostMessageW(c->hwnd, c->msg, (WPARAM)u->exitCode, (LPARAM)u))
         IlizUpdaterFree(u);
-    free(c);
+    IlizUpdaterHeapFree_(c);
     return 0;
 }
 
@@ -192,15 +209,15 @@ static __inline DWORD WINAPI IlizUpdaterCheckThread_(void *p)
 static __inline BOOL IlizUpdaterCheckAsync(HWND hwnd, UINT msg, const wchar_t *extraArgs)
 {
     HANDLE h;
-    IlizUpdaterAsyncCtx_ *c = (IlizUpdaterAsyncCtx_ *)calloc(1, sizeof(*c));
+    IlizUpdaterAsyncCtx_ *c = (IlizUpdaterAsyncCtx_ *)IlizUpdaterAlloc_(sizeof(*c));
     if (!c)
         return FALSE;
     c->hwnd = hwnd;
     c->msg = msg;
-    wcsncpy_s(c->args, 128, extraArgs ? extraArgs : L"", _TRUNCATE);
+    lstrcpynW(c->args, extraArgs ? extraArgs : L"", 128);
     h = CreateThread(NULL, 0, IlizUpdaterCheckThread_, c, 0, NULL);
     if (!h) {
-        free(c);
+        IlizUpdaterHeapFree_(c);
         return FALSE;
     }
     CloseHandle(h);
@@ -215,9 +232,8 @@ static __inline BOOL IlizUpdaterLaunch(BOOL silent)
     PROCESS_INFORMATION pi;
     if (!IlizUpdaterPath(exe, MAX_PATH))
         return FALSE;
-    swprintf_s(cmd, MAX_PATH + 128, L"\"%ls\" --update %ls--pid %lu", exe, silent ? L"--silent " : L"",
-               GetCurrentProcessId());
-    memset(&si, 0, sizeof(si));
+    wsprintfW(cmd, L"\"%s\" --update %s--pid %lu", exe, silent ? L"--silent " : L"", GetCurrentProcessId());
+    SecureZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
     if (!CreateProcessW(exe, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
         return FALSE;
@@ -235,7 +251,7 @@ static __inline DWORD WINAPI IlizUpdaterQuitThread_(void *p)
     if (WaitForSingleObject(c->ev, INFINITE) == WAIT_OBJECT_0)
         PostMessageW(c->hwnd, c->msg, 0, 0);
     CloseHandle(c->ev);
-    free(c);
+    IlizUpdaterHeapFree_(c);
     return 0;
 }
 
@@ -245,21 +261,21 @@ static __inline BOOL IlizUpdaterWatchQuit(HWND hwnd, UINT msg)
 {
     wchar_t name[64];
     HANDLE h;
-    IlizUpdaterQuitCtx_ *c = (IlizUpdaterQuitCtx_ *)calloc(1, sizeof(*c));
+    IlizUpdaterQuitCtx_ *c = (IlizUpdaterQuitCtx_ *)IlizUpdaterAlloc_(sizeof(*c));
     if (!c)
         return FALSE;
-    swprintf_s(name, 64, L"Local\\iliz_updater_quit.%lu", GetCurrentProcessId());
+    wsprintfW(name, L"Local\\iliz_updater_quit.%lu", GetCurrentProcessId());
     c->hwnd = hwnd;
     c->msg = msg;
     c->ev = CreateEventW(NULL, TRUE, FALSE, name);
     if (!c->ev) {
-        free(c);
+        IlizUpdaterHeapFree_(c);
         return FALSE;
     }
     h = CreateThread(NULL, 0, IlizUpdaterQuitThread_, c, 0, NULL);
     if (!h) {
         CloseHandle(c->ev);
-        free(c);
+        IlizUpdaterHeapFree_(c);
         return FALSE;
     }
     CloseHandle(h);
