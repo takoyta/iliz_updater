@@ -19,6 +19,7 @@ cl /nologo /std:c++17 /utf-8 /MT /O1 /Os /GS- /Gy /GR- /EHs-c- /W3 /DUNICODE /D_
    "%ROOT%third_party\cjson\cJSON.c" "%ROOT%third_party\miniz\miniz.c" ^
    iliz_updater.res ^
    /link /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /MANIFEST:NO ^
+   /NODEFAULTLIB:libucrt.lib ucrt.lib ^
    kernel32.lib user32.lib shell32.lib comctl32.lib advapi32.lib ^
    winhttp.lib bcrypt.lib version.lib shlwapi.lib || exit /b 1
 

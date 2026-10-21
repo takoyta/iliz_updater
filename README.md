@@ -24,6 +24,8 @@ build.bat
 
 Needs VS 2022 Build Tools (override the path with `VSINSTALL`). Output: `bin\iliz_updater.exe`.
 
+The CRT is linked as "hybrid": vcruntime is static, UCRT comes from the system `ucrtbase.dll` (built into Windows 10/11; Windows 7/8.1 need update KB2999226). No VC++ Redistributable is required.
+
 ## Layout next to the app
 
 ```

@@ -19,6 +19,8 @@ English: [README.md](README.md). Там же полная таблица клю�
 
 `build.bat`. Нужны VS 2022 Build Tools (путь меняется переменной `VSINSTALL`). Результат лежит в `bin\iliz_updater.exe`.
 
+Библиотека CRT подключена гибридно: vcruntime статически, UCRT берётся из системного `ucrtbase.dll` (есть в Windows 10/11; на Windows 7/8.1 нужно обновление KB2999226). VC++ Redistributable не нужен.
+
 ## Что лежит рядом с программой
 
 ```
